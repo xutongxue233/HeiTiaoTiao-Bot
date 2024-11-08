@@ -6,7 +6,7 @@ import random
 from src.util.ehentai_utils import ehentai_utils
 from src.util.ehentai_utils import ehentai_download
 
-ehentai = on_command("ehentai", aliases={"今日新本", "随机本子"})
+ehentai = on_command("ehentai", aliases={"每日一本", "随机本子"})
 
 ehentai_down = on_command("ehentai_download", aliases={"随机下载本子"})
 
@@ -29,42 +29,37 @@ async def _(args: Message = CommandArg()):
 @ehentai_down.handle()
 async def _(bot: Bot, event: Event, args: Message = CommandArg()):
     group_id = event.group_id
-    # 定义最大获取条目数
-    max_results = 5
-    max_page_count = 30
+    # 定义最大获取条目数和目标页数
+    max_results = 10
+    max_page_count = 35  # 目标：页数小于35的图集
+    limit_result = 50
 
-    # 获取最多 5 个搜索结果
-    results = ehentai_utils.get_ehentai_list(max_results=max_results)
-
-    # 过滤出页数小于 max_page_count 的结果
-    filtered_results = [result for result in results if int(result['pages']) < max_page_count]
-
-    # 如果没有找到符合条件的图集，增加爬取数量
-    while not filtered_results:
-        max_results += 5  # 增加搜索条目数
+    while True:
         results = ehentai_utils.get_ehentai_list(max_results=max_results)
+        # 筛选出页数小于 max_page_count 的图集
         filtered_results = [result for result in results if int(result['pages']) < max_page_count]
-        if max_results > 40:  # 防止死循环，设置最大爬取限制
+        if filtered_results or max_results >= limit_result:  # 找到符合条件的图集，或爬取数量达到上限
             break
+        max_results += 5  # 如果没找到，增加搜索条目数
 
     if filtered_results:
-        # 获取页数最少的结果
-        result = min(filtered_results, key=lambda x: x['pages'])  # 根据 pages 选择最小的条目
-        print(f"随机下载本子页数: {result['pages']}")
-
-        # 下载该条目的图片并生成 PDF
+        result = filtered_results[0]  # 直接取第一个符合条件的图集
+        print(f"下载图集，页数: {result['pages']}")  # 输出图集页数
         try:
-            pdf_file = ehentai_download.download_images_and_create_pdf(result['href'], int(result['pages']))
-            # 发送消息：说明文件已下载
-            await ehentai_down.send("已下载图集，正在发送 PDF...")
+            # 获取长图路径
+            long_image_path = ehentai_download.download_images_and_create_long_image(result['href'], int(result['pages']), max_threads=5)
+            # 发送消息：文件下载完成
+            await ehentai_down.send("已下载图集，正在发送长图....")
+            # 上传长图文件到群聊
             await bot.call_api(
-                'upload_group_file',  # API 名称
-                group_id=group_id,  # 群聊ID
-                file=pdf_file  # 文件路径
+                'upload_group_file',
+                group_id=group_id,
+                file=long_image_path
             )
         except Exception as e:
-            await ehentai_down.send(f"下载或发送 PDF 时发生错误：{str(e)}")  # 直接发送字符串
+            await ehentai_down.send(f"下载或发送失败：{str(e)}")
     else:
-        # 如果没有找到符合条件的图集
-        await ehentai_down.send("未找到符合条件的图集，页数必须小于 30。")
+        # 没有找到符合条件的图集
+        await ehentai_down.send(f"未找到符合条件的图集，页数必须小于 {max_page_count}。")
+
 

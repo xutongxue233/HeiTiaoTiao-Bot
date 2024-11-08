@@ -2,12 +2,11 @@ import requests
 from bs4 import BeautifulSoup
 
 proxies = {
-    "http": "socks5h://127.0.0.1:7890",  # 使用代理
+    "http": "socks5h://127.0.0.1:7890",  # 使用本地Clash代理
 }
 
 # 目标网站 URL
 url = "https://e-hentai.org/popular"
-
 
 def get_ehentai_list(max_results=5):
     # 爬取的结果
@@ -95,8 +94,8 @@ def get_ehentai_list(max_results=5):
     return results
 
 
-if __name__ == "__main__":
-    results = get_ehentai_list(max_results=10)
-    # 打印结果
-    for result in results:
-        print(f"链接: {result['href']}, 标题: {result['title']}, 图片链接: {result['image_url']}, 页数: {result['pages']}")
+# if __name__ == "__main__":
+#     results = get_ehentai_list(max_results=10)
+#     # 打印结果
+#     for result in results:
+#         print(f"链接: {result['href']}, 标题: {result['title']}, 图片链接: {result['image_url']}, 页数: {result['pages']}")

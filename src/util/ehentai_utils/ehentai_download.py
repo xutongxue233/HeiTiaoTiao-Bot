@@ -1,15 +1,17 @@
 import os
+import uuid
+
 import requests
+from PIL import Image
 from bs4 import BeautifulSoup
 import re
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
 from concurrent.futures import ThreadPoolExecutor
 
 # 设置下载图片的基本目录
 base_folder = os.path.join(os.getcwd(), 'data', 'ehentai')
 if not os.path.exists(base_folder):
     os.makedirs(base_folder)
+
 
 # 获取页面内容
 def fetch_page(url):
@@ -20,16 +22,25 @@ def fetch_page(url):
     response.raise_for_status()
     return response.text
 
-# 获取页面的标题，去除可能导致文件路径问题的符号
+
 def get_title(page_url):
     html = fetch_page(page_url)
     soup = BeautifulSoup(html, 'html.parser')
+    # 尝试获取 id 为 'gj' 的标题
     title_tag = soup.find('h1', {'id': 'gj'})
+    # 如果为空，尝试获取 id 为 'gn' 的标题
+    if not title_tag.get_text(strip=True):
+        title_tag = soup.find('h1', {'id': 'gn'})
+    # 获取标题文本
     title = title_tag.get_text(strip=True) if title_tag else 'unknown_title'
-
-    # 去除文件路径不合法的字符
+    print("title: " + title)
+    # 如果标题为空，生成随机字符串
+    if not title or title == 'unknown_title':
+        title = str(uuid.uuid4())  # 生成随机字符串
+    # 去除不允许的字符
     title = re.sub(r'[\/:*?"<>|]', '_', title)
     return title
+
 
 # 获取每页的所有 a 标签链接
 def get_page_links(page_url):
@@ -47,6 +58,7 @@ def get_page_links(page_url):
 
     return page_links
 
+
 # 获取图片页面的实际图片 URL
 def get_image_url(image_page_url):
     html = fetch_page(image_page_url)
@@ -55,9 +67,15 @@ def get_image_url(image_page_url):
     img_url = img_tag.get('src') if img_tag else None
     return img_url
 
+
 # 下载并保存图片
 def download_image(img_url, img_path):
     try:
+        # 判断图片是否已经下载过
+        if os.path.exists(img_path):
+            print(f"Image {img_path} already exists. Skipping download.")
+            return img_path  # 如果文件已存在，直接返回文件路径
+
         # 下载图片
         img_data = requests.get(img_url).content
         if not img_data:
@@ -73,26 +91,52 @@ def download_image(img_url, img_path):
         print(f"Error with image {img_url}: {e}")
         return None  # 下载或处理失败时返回 None
 
-# 创建 PDF 并插入图片，使用 reportlab 支持 webp 格式
-def create_pdf_from_images(images, pdf_path):
-    c = canvas.Canvas(pdf_path, pagesize=letter)
+
+# 将所有图片合成一张长图
+def create_long_image(images, output_path):
+    # 判断长图是否已经存在
+    if os.path.exists(output_path):
+        print(f"Long image {output_path} already exists. Returning existing file.")
+        return output_path  # 如果长图已存在，直接返回
+
+    # 计算拼接后的长图尺寸
+    total_height = 0
+    max_width = 0
+    image_objects = []
+
+    # 读取所有图片，计算宽度和总高度
     for img_path in images:
-        if not img_path:
-            continue  # 如果图片下载失败，跳过该图片
-
         try:
-            c.drawImage(img_path, 10, 500, width=500, height=500)  # 这里插入图片，调整大小
-            c.showPage()  # 生成新的一页
+            img = Image.open(img_path)
+            img_width, img_height = img.size
+            total_height += img_height  # 累加总高度
+            max_width = max(max_width, img_width)  # 获取最大的宽度
+            image_objects.append(img)
         except Exception as e:
-            print(f"Error adding image {img_path} to PDF: {e}")
-            continue  # 跳过添加失败的图片
+            print(f"Error loading image {img_path}: {e}")
 
-    c.save()
-    return pdf_path  # 返回生成的 PDF 文件路径
+    # 创建一个新的空白图像，用于拼接
+    long_image = Image.new('RGB', (max_width, total_height))
 
-def download_images_and_create_pdf(url, pic_num, max_threads=5):
+    # 拼接图片
+    current_height = 0
+    for img in image_objects:
+        long_image.paste(img, (0, current_height))
+        current_height += img.height  # 更新当前的拼接位置
+
+    # 保存长图
+    long_image.save(output_path)
+    return output_path  # 返回长图文件路径
+
+
+# 下载图片并拼接为长图
+def download_images_and_create_long_image(url, pic_num, max_threads=5):
+    print("图片：" + url + "  图片数量:" + str(pic_num))
     title = get_title(url)
     folder_path = os.path.join(base_folder, title)
+
+    # 确保使用正斜杠或者反斜杠（Windows兼容）
+    folder_path = os.path.normpath(folder_path)
 
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
@@ -129,12 +173,13 @@ def download_images_and_create_pdf(url, pic_num, max_threads=5):
             if downloaded_img_path:  # 如果下载成功，才添加到路径列表
                 image_paths.append(downloaded_img_path)
 
-    # 创建 PDF
-    pdf_path = os.path.join(base_folder, f"{title}.pdf")
-    pdf_path = create_pdf_from_images(image_paths, pdf_path)
+    # 拼接图片并保存为长图
+    long_image_path = os.path.join(folder_path, f'{title}.jpg')  # 使用 title 作为文件名
+    return create_long_image(image_paths, long_image_path)  # 返回长图文件路径
 
-    return pdf_path  # 返回 PDF 文件路径
+# 调用函数示例
+# long_image_path = download_images_and_create_long_image('https://e-hentai.org/g/3115875/8cce20227a/', 20, max_threads=10)
+# print(f"Long image generated at: {long_image_path}")
 
-# 调用函数
-# file_path = download_images_and_create_pdf('https://e-hentai.org/g/3115032/765c30fc9c/', 18, max_threads=10)
-# print(f"PDF generated at: {file_path}")
+# long_image_path = download_images_and_create_long_image('https://e-hentai.org/g/3115032/765c30fc9c/', 18, max_threads=10)
+# print(f"Long image generated at: {long_image_path}")
